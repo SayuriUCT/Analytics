@@ -34,15 +34,6 @@ training$VisitorType <- as.factor(training$VisitorType)
 training$Weekend <- as.factor(training$Weekend)
 
 training$Revenue <- as.factor(training$Revenue)
-training$VisitorType <- as.numeric(training$VisitorType)
-training$Month <- as.numeric(training$Month)
-training$OperatingSystems <- as.numeric(training$OperatingSystems)
-training$Browser <- as.numeric(training$Browser)
-training$Weekend <- as.numeric(training$Weekend)
-ggplot(training, aes(x = Revenue)) +
-  geom_bar(fill = "blue") +
-  theme_minimal() +
-  labs(title = "Class Distribution of Revenue (Target Variable)", x = "Revenue", y = "Count")
 
 ```
 
@@ -60,59 +51,206 @@ Categorical variables
 # Logistic regression with a linear decision boundary. Apply elastic-net regularisation to this model, motivating for the choice of α and λ.
 library(ggplot2)
 library(gridExtra)
-install.packages(CRAN)
-library(CRAN)
+
+#Log Reg model
 log_model <- glm(Revenue ~ ., data = training, family = binomial)
 
+#Summary o fLog Reg Model
 log_model |> 
   tidy() |>
   kable(digits = 2, caption = 'Summary of logistic regression model fitted to the Online Shopping Training dataset') |>
   kable_styling(full_width = F)
 
-exp(coef(log_model)) |>
-  tidy() |>
-  kable(digits = 3,col.names = c('$X_j$', '$e^{\\beta_j}$'), escape = F,
-        caption = 'Odds effects for the logistic regression model fitted to the Online Shopping Training dataset') |>
-  kable_styling(full_width = F)
+#10-fold cross validation
+set.seed(1)
+x <- model.matrix(Revenue ~ ., data = training)[, -1]
+y <- as.numeric(training$Revenue)
 
-#3d fit
-mod3 <- glm(Revenue ~ Administrative_Duration + Informational_Duration + ProductRelated_Duration, 'binomial', training)
+lasso_CV <- cv.glmnet(x, y, 
+                      alpha = 1, nfolds = 10, type.measure = 'mse', standardize = T)
 
-coefs_3 <- coef(mod3)
-kable(coefs_3, digits = 4)
+plot(lasso_CV)
+abline(h = lasso_CV$cvup[which.min(lasso_CV$cvm)], lty = 2)
+
+lamda <- lasso_CV$lambda
+lambest <- lasso_CV$lambda.min
+lambest
+#Very small value, minimal regularisation, most varaibles are being retained in the model.
+
+#Linear decison boundary
+mod2 <- glm(Revenue ~ ExitRates + PageValues, 'binomial', training)
+coefs_2 <- coef(mod2)
+
+# Same plot as above, but all the data
+plot(training$ExitRates, training$PageValues,
+     col = ifelse(training$Revenue == 1, 'purple', 'lightblue'),
+     pch = ifelse(training$Revenue == 1, 3, 1),
+     xlab = 'Exit Rate', ylab = 'Page Values')
+legend('topright', c('Transaction', 'No Transaction'), 
+       col = c('purple', 'lightblue'), 
+       pch = c(3, 1))
+# Add the decision boundary
+abline(-coefs_2[1]/coefs_2[3], -coefs_2[2]/coefs_2[3], col = 'navy', lwd = 3) 
+
+#Elastic Net Regularisation
+elasticnet <- cva.glmnet(Revenue ~ ., training, family = "binomial", alpha = seq(0, 1, 0.1))
+plot(elasticnet)
+alphas <- elasticnet$alpha 
+cv_mses <- sapply(elasticnet$modlist, 
+                  function(mod) min(mod$cvm) 
+)
+best_alpha <- alphas[which.min(cv_mses)]
+best_alpha
+plot(alphas, cv_mses, 'b', lwd = 2, pch = 16, col = 'cyan3', xlab = expression(alpha), ylab = 'CV MSE',
+     ylim = c(0, 1)) 
+abline(v = best_alpha, lty = 3, col = 'firebrick')
 ```
 
 Decision Boundary
 
-Select features that are meaningful to predicting transcations
+Select features that are meaningful to predicting transcations p \< 0.05
+
+## Logistic Regression with non-linear decison boundary
 
 ```{r}
-library(rgl)
-install.packages("rgl")
-# Prepare data for logistic regression
-x <- model.matrix(Revenue ~ ., data = training)[, -1] # Remove intercept
-y <- training$Revenue
+set.seed(1)
 
-# Perform 10-fold cross-validation to tune alpha and lambda
-alpha_values <- seq(0, 1, by = 0.1) # Range of alpha values to test
-cv_results <- lapply(alpha_values, function(a) {
-  cv.glmnet(x, y, family = "binomial", alpha = a, type.measure = "class")
-})
+cv_control <- trainControl(method = "cv", number = 10)
 
-# Select the best alpha and corresponding lambda
-best_model_index <- which.min(sapply(cv_results, function(model) min(model$cvm)))
-best_alpha <- alpha_values[best_model_index]
-best_lambda <- cv_results[[best_model_index]]$lambda.min
+# Fit polynomial logistic regression model with cross-validation
+poly_log_cv <- train(Revenue ~ ExitRates + I(ExitRates^2) + I(ExitRates^3) + I(ExitRates^4) + PageValues, 
+                     data = training, method = "glm", family = "binomial", trControl = cv_control)
 
-# Fit the final logistic regression model with the best alpha and lambda
-final_model <- glmnet(x, y, family = "binomial", alpha = best_alpha, lambda = best_lambda)
 
-# Visualize linear decision boundary using 3D plot
-coefs <- coef(final_model, s = best_lambda)
-plot3d(training$Administrative_Duration, training$Informational_Duration, training$ProductRelated_Duration,
-       xlab = 'Admin', ylab = 'Info', zlab = 'ProdRel',
-       col = ifelse(train_data$Revenue == 1, 'orange', 'lightblue'),
-       size = 5)
-planes3d(coefs["Administrative_Duration"], coefs["Informational_Duration"], coefs["ProductRelated_Duration"], coefs[1], col = 'navy', lwd = 3, alpha = 0.5)
+cfs_poly <- coef(poly_log_cv$finalModel) 
 
+plot(training$ExitRates, training$PageValues,
+     col = ifelse(train_data$Revenue == 1, 'purple', 'lightblue'),
+     pch = ifelse(train_data$Revenue == 1, 3, 1),
+     xlab = 'Exit Rates', ylab = 'Page Values')
+legend('topright', c('Transaction', 'No Transaction'), 
+       col = c('purple', 'lightblue'), 
+       pch = c(3, 1))
+
+#decision boundary
+xx <- seq(min(training$ExitRates), max(training$ExitRates), length.out = 100)
+lines(xx, (cbind(1, xx, xx^2, xx^3, xx^4) %*% cfs_poly[-6]) / -cfs_poly[6],
+      col = 'navy', lwd = 2)
+```
+
+## KNN
+
+```{r}
+# K-Nearest Neighbours (KNN) Model Selection with Cross-Validation
+set.seed(1)
+knn_features <- Revenue ~ ExitRates + PageValues + BounceRates  
+knn_grid <- expand.grid(k = 3:15)
+
+
+knn_control <- trainControl(method = 'repeatedcv', number = 10, repeats = 10)
+
+# Train KNN model with cross-validation
+knn_cv <- train(knn_features, 
+                data = train_data, 
+                method = 'knn', 
+                trControl = knn_control, 
+                tuneGrid = knn_grid)
+
+plot(knn_cv)
+
+```
+
+## Classification Tree
+
+```{r}
+library(tree)
+# Grow a large classification tree
+big_tree <- tree(Revenue ~ ., data = training, 
+                 control = tree.control(nobs = nrow(na.omit(training)), mindev = 0.005))
+
+set.seed(28)
+
+cv_tree <- cv.tree(big_tree, FUN = prune.misclass)
+
+plot(cv_tree$size, cv_tree$dev, type = 'o',
+     pch = 16, col = 'navy', lwd = 2,
+     xlab = 'Number of terminal nodes', ylab = 'CV error')
+
+# pruning parameter labels
+cv_tree$k[1] <- 0
+alpha <- round(cv_tree$k, 1)
+axis(3, at = cv_tree$size, lab = alpha, cex.axis = 0.8)
+mtext(expression(alpha), 3, line = 2.5, cex = 1.2)
+axis(side = 1, at = 1:max(cv_tree$size))
+
+# Determine optimal tree size at the elbow point (smallest size with min dev)
+optimal_size <- min(cv_tree$size[cv_tree$dev == min(cv_tree$dev)])  # Pick smallest tree with min error
+
+# Add correct vertical line at the elbow
+abline(v = optimal_size, lty = 2, lwd = 2, col = 'red')
+
+# Prune the tree to the correct optimal size
+pruned_tree <- prune.misclass(big_tree, best = optimal_size)
+
+# Plot the pruned tree
+plot(pruned_tree)
+text(pruned_tree, pretty = 0)
+
+```
+
+## Random Forest
+
+```{r}
+library(randomForest)
+
+set.seed(4026)
+bagging_model <- randomForest(Revenue ~ ., data = training,
+                              mtry = ncol(training) - 1,  # Use all features
+                              ntree = 250,
+                              importance = TRUE,
+                              na.action = na.exclude)
+set.seed(4026)
+rf_model <- randomForest(Revenue ~ ., data = training,
+                         ntree = 250,
+                         importance = TRUE,
+                         na.action = na.exclude)
+
+# Plot OOB error rate for both models
+plot(bagging_model$err.rate[,1], type = 'l', xlab = 'Number of trees', ylab = 'OOB Error Rate',
+     col = 'blue', lwd = 2, ylim = range(bagging_model$err.rate[,1], rf_model$err.rate[,1]))
+lines(rf_model$err.rate[,1], col = 'darkgreen', lwd = 2, type = 's')
+legend('topright', legend = c('Bagging', 'Random Forest'),
+       col = c('blue', 'darkgreen'), lwd = 2)
+
+```
+
+## XG Boost
+
+```{r}
+set.seed(1)
+
+
+# Define hyperparameter tuning grid
+gbm_grid <- expand.grid(
+  n.trees = seq(500, 6000, 500),
+  interaction.depth = 1:5,
+  shrinkage = c(0.01, 0.005, 0.001),
+  n.minobsinnode = 1
+)
+
+# Define 10-fold cross-validation
+gbm_control <- trainControl(method = 'cv', number = 10, verboseIter = TRUE)
+
+# Train GBM model with cross-validation
+gbm_cv <- train(
+  Revenue ~ ., 
+  data = training, 
+  method = 'gbm',
+  distribution = 'bernoulli',  # For classification
+  trControl = gbm_control,
+  verbose = FALSE,
+  tuneGrid = gbm_grid
+)
+
+plot(gbm_cv)
 ```
