@@ -1,0 +1,118 @@
+---
+title: "Assignment 1"
+---
+
+Goal: to predict if an online shopper will finalise a transaction based on information about their browsing sessions
+
+Target Variable: Revenue - binary
+
+15 feature variables
+
+# Question 1: Modelling
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(DataExplorer)
+library(kableExtra) 
+library(broom) 
+library(glmnetUtils)
+library(glmnet)
+library(corrplot)
+library(rgl)
+training <- read.csv("online_shopping_train.csv")
+str(training)
+testing <- read.csv("online_shopping_testing.csv")
+validation <- read.csv("online_shopping_valid.csv")
+
+#convert to categorical variables
+training$Month <- as.factor(training$Month)
+training$OperatingSystems <- as.factor(training$OperatingSystems)
+training$Browser <- as.factor(training$Browser)
+training$VisitorType <- as.factor(training$VisitorType)
+training$Weekend <- as.factor(training$Weekend)
+
+training$Revenue <- as.factor(training$Revenue)
+training$VisitorType <- as.numeric(training$VisitorType)
+training$Month <- as.numeric(training$Month)
+training$OperatingSystems <- as.numeric(training$OperatingSystems)
+training$Browser <- as.numeric(training$Browser)
+training$Weekend <- as.numeric(training$Weekend)
+ggplot(training, aes(x = Revenue)) +
+  geom_bar(fill = "blue") +
+  theme_minimal() +
+  labs(title = "Class Distribution of Revenue (Target Variable)", x = "Revenue", y = "Count")
+
+```
+
+Categorical variables
+
+1.  Visitor Type
+2.  Weekend
+3.  Browser
+4.  Operating system
+5.  Month
+
+## Logistic Regression Model
+
+```{r}
+# Logistic regression with a linear decision boundary. Apply elastic-net regularisation to this model, motivating for the choice of α and λ.
+library(ggplot2)
+library(gridExtra)
+install.packages(CRAN)
+library(CRAN)
+log_model <- glm(Revenue ~ ., data = training, family = binomial)
+
+log_model |> 
+  tidy() |>
+  kable(digits = 2, caption = 'Summary of logistic regression model fitted to the Online Shopping Training dataset') |>
+  kable_styling(full_width = F)
+
+exp(coef(log_model)) |>
+  tidy() |>
+  kable(digits = 3,col.names = c('$X_j$', '$e^{\\beta_j}$'), escape = F,
+        caption = 'Odds effects for the logistic regression model fitted to the Online Shopping Training dataset') |>
+  kable_styling(full_width = F)
+
+#3d fit
+mod3 <- glm(Revenue ~ Administrative_Duration + Informational_Duration + ProductRelated_Duration, 'binomial', training)
+
+coefs_3 <- coef(mod3)
+kable(coefs_3, digits = 4)
+```
+
+Decision Boundary
+
+Select features that are meaningful to predicting transcations
+
+```{r}
+library(rgl)
+install.packages("rgl")
+# Prepare data for logistic regression
+x <- model.matrix(Revenue ~ ., data = training)[, -1] # Remove intercept
+y <- training$Revenue
+
+# Perform 10-fold cross-validation to tune alpha and lambda
+alpha_values <- seq(0, 1, by = 0.1) # Range of alpha values to test
+cv_results <- lapply(alpha_values, function(a) {
+  cv.glmnet(x, y, family = "binomial", alpha = a, type.measure = "class")
+})
+
+# Select the best alpha and corresponding lambda
+best_model_index <- which.min(sapply(cv_results, function(model) min(model$cvm)))
+best_alpha <- alpha_values[best_model_index]
+best_lambda <- cv_results[[best_model_index]]$lambda.min
+
+# Fit the final logistic regression model with the best alpha and lambda
+final_model <- glmnet(x, y, family = "binomial", alpha = best_alpha, lambda = best_lambda)
+
+# Visualize linear decision boundary using 3D plot
+coefs <- coef(final_model, s = best_lambda)
+plot3d(training$Administrative_Duration, training$Informational_Duration, training$ProductRelated_Duration,
+       xlab = 'Admin', ylab = 'Info', zlab = 'ProdRel',
+       col = ifelse(train_data$Revenue == 1, 'orange', 'lightblue'),
+       size = 5)
+planes3d(coefs["Administrative_Duration"], coefs["Informational_Duration"], coefs["ProductRelated_Duration"], coefs[1], col = 'navy', lwd = 3, alpha = 0.5)
+
+```
