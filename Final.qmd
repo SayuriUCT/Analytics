@@ -1,0 +1,56 @@
+---
+title: "Assignment 1"
+format: pdf
+author: Sayuri Reddy RDDSSAY003 | Yastika Motilal MTLYAS003
+---
+
+# Question 1: Modelling
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Loaded all libraries needed
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(DataExplorer)
+library(kableExtra) 
+library(broom) 
+library(glmnetUtils)
+library(glmnet)
+library(corrplot)
+library(ggplot2)
+library(gridExtra)
+library(gbm)
+
+#Load data
+training <- read.csv("online_shopping_train.csv")
+
+#Convert all categorical variables
+training$Month <- as.factor(training$Month)
+training$OperatingSystems <- as.factor(training$OperatingSystems)
+training$Browser <- as.factor(training$Browser)
+training$VisitorType <- as.factor(training$VisitorType)
+training$Weekend <- as.factor(training$Weekend)
+
+training$Revenue <- as.factor(training$Revenue)
+```
+
+## Logistic Regression with linear decision boundary
+
+```{r}
+#Log Reg model
+log_model <- glm(Revenue ~ ., data = training, family = binomial)
+
+#Summary o fLog Reg Model
+log_model |> 
+  tidy() |>
+  kable(digits = 2, caption = 'Saturated logistic regression model fitted to the Online Shopping Training dataset') |>
+  kable_styling(full_width = F)
+```
+
+1.  Table: saturated log reg model
+
+2.  Table Lambda values:
+
+    From teh table we can see that
+
+3.  

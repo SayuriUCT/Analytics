@@ -1,16 +1,12 @@
 ---
 title: "Assignment 1"
+format: html
 ---
 
-Goal: to predict if an online shopper will finalise a transaction based on information about their browsing sessions
+# Question 1a :
 
-Target Variable: Revenue - binary
-
-15 feature variables
-
-# Question 1: Modelling
-
-```{r, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+#All libraries needed
 library(dplyr)
 library(tidyverse)
 library(caret)
@@ -20,9 +16,11 @@ library(broom)
 library(glmnetUtils)
 library(glmnet)
 library(corrplot)
-library(rgl)
+library(ggplot2)
+library(gridExtra)
+library(gbm)
+#Laod data
 training <- read.csv("online_shopping_train.csv")
-str(training)
 testing <- read.csv("online_shopping_testing.csv")
 validation <- read.csv("online_shopping_valid.csv")
 
@@ -37,21 +35,10 @@ training$Revenue <- as.factor(training$Revenue)
 
 ```
 
-Categorical variables
-
-1.  Visitor Type
-2.  Weekend
-3.  Browser
-4.  Operating system
-5.  Month
-
 ## Logistic Regression Model
 
-```{r}
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
 # Logistic regression with a linear decision boundary. Apply elastic-net regularisation to this model, motivating for the choice of α and λ.
-library(ggplot2)
-library(gridExtra)
-
 #Log Reg model
 log_model <- glm(Revenue ~ ., data = training, family = binomial)
 
@@ -62,30 +49,27 @@ log_model |>
   kable_styling(full_width = F)
 
 #10-fold cross validation
-set.seed(1)
+set.seed(123)
 x <- model.matrix(Revenue ~ ., data = training)[, -1]
 y <- as.numeric(training$Revenue)
 
 lasso_CV <- cv.glmnet(x, y, 
-                      alpha = 1, nfolds = 10, type.measure = 'mse', standardize = T)
+                      alpha = 1, nfolds = 10, type.measure = 'auc', standardize = T)
 
-plot(lasso_CV)
-abline(h = lasso_CV$cvup[which.min(lasso_CV$cvm)], lty = 2)
+best_lam <- lasso_CV$lambda.min
+best_lam
 
-lamda <- lasso_CV$lambda
-lambest <- lasso_CV$lambda.min
-lambest
 #Very small value, minimal regularisation, most varaibles are being retained in the model.
 
 #Linear decison boundary
 mod2 <- glm(Revenue ~ ExitRates + PageValues, 'binomial', training)
 coefs_2 <- coef(mod2)
 
-# Same plot as above, but all the data
+#plot
 plot(training$ExitRates, training$PageValues,
      col = ifelse(training$Revenue == 1, 'purple', 'lightblue'),
      pch = ifelse(training$Revenue == 1, 3, 1),
-     xlab = 'Exit Rate', ylab = 'Page Values')
+     xlab = 'Page Values', ylab = 'Exit Rates')
 legend('topright', c('Transaction', 'No Transaction'), 
        col = c('purple', 'lightblue'), 
        pch = c(3, 1))
@@ -93,24 +77,110 @@ legend('topright', c('Transaction', 'No Transaction'),
 abline(-coefs_2[1]/coefs_2[3], -coefs_2[2]/coefs_2[3], col = 'navy', lwd = 3) 
 
 #Elastic Net Regularisation
-elasticnet <- cva.glmnet(Revenue ~ ., training, family = "binomial", alpha = seq(0, 1, 0.1))
-plot(elasticnet)
-alphas <- elasticnet$alpha 
+#elasticnet <- cva.glmnet(Revenue ~ ., training, family = "binomial", alpha = seq(0, 1, 0.1))
+#plot(elasticnet)
+#save(elasticnet, file = 'elasticnet.Rdata')
+
+load("elasticnet.Rdata")
 cv_mses <- sapply(elasticnet$modlist, 
                   function(mod) min(mod$cvm) 
 )
 best_alpha <- alphas[which.min(cv_mses)]
 best_alpha
 plot(alphas, cv_mses, 'b', lwd = 2, pch = 16, col = 'cyan3', xlab = expression(alpha), ylab = 'CV MSE',
-     ylim = c(0, 1)) 
+     ylim = c(0.56, 0.6)) 
 abline(v = best_alpha, lty = 3, col = 'firebrick')
+```
+
+## Option 2 for Linear Elastic Net
+
+```{r}
+library(glmnet)
+library(tidyverse)
+
+set.seed(123)
+
+# Prepare your data explicitly
+x <- model.matrix(Revenue ~ ., training)[, -1]
+y <- as.factor(training$Revenue)
+
+alphas <- c(0, 0.25, 0.5, 0.75, 1)
+cv_errors <- numeric(length(alphas))
+best_lambdas <- numeric(length(alphas))
+
+# Run CV for each alpha
+for (i in seq_along(alphas)) {
+  cv_fit <- cv.glmnet(x, y, family = "binomial",
+                      alpha = alphas[i], nfolds = 10,
+                      type.measure = "class")
+  
+  # Record best lambda and corresponding error
+  best_lambdas[i] <- cv_fit$lambda.min
+  cv_errors[i] <- min(cv_fit$cvm)
+}
+
+# Identify best alpha and lambda
+best_alpha <- alphas[which.min(cv_errors)]
+best_lambda <- best_lambdas[which.min(cv_errors)]
+
+best_alpha
+best_lambda
+
+plot(alphas, cv_errors, type = 'b', lwd = 2, pch = 16, col = 'cyan3',
+     xlab = expression(alpha), 
+     ylab = 'Cross-validation misclassification error',
+     main = 'CV Error vs Alpha (Elastic-Net Logistic Regression)')
+
+abline(v = best_alpha, lty = 3, col = 'firebrick')
+
+# Label the best alpha clearly
+text(best_alpha, min(cv_errors), labels = paste("Best alpha =", best_alpha),
+     pos = 4, offset = 0.8, col = 'firebrick')
+
+# Fit a simplified logistic regression with the best alpha and lambda
+simple_x <- model.matrix(Revenue ~ ExitRates + PageValues, training)[, -1]
+
+simple_fit <- glmnet(simple_x, y, family = "binomial", 
+                     alpha = best_alpha, lambda = best_lambda)
+
+# Extract coefficients explicitly
+coefs <- coef(simple_fit)
+intercept <- as.numeric(coefs[1])
+beta_exit <- as.numeric(coefs[2])
+beta_page <- as.numeric(coefs[3])
+
+# Clear plot of decision boundary
+ggplot(training, aes(x = ExitRates, y = PageValues, color = Revenue)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("lightblue", "purple")) +
+  geom_abline(
+    intercept = -intercept/beta_page, 
+    slope = -beta_exit/beta_page, 
+    linewidth = 1, color = "navy"
+  ) +
+  labs(title = "Linear Decision Boundary (Elastic-Net Logistic Regression)",
+       x = "Exit Rates", y = "Page Values") +
+  theme_minimal()
+
 ```
 
 Decision Boundary
 
 Select features that are meaningful to predicting transcations p \< 0.05
 
+Model 1:
+
+We dont have to worry about plotting the decison boundaries, it was just for visualization in class.
+
+Just show the satuarted model and their coefficients, when you do elastic net. show which variables have shrunk to 0.
+
+Model 2:
+
+Dont have to worry about plot. Show EDA to jusitfy which variables you added as polynomial terms to make it non-linear.
+
 ## Logistic Regression with non-linear decison boundary
+
+\>\> check if we should use 3rd degree or 4th? how does this affect the results....
 
 ```{r}
 set.seed(1)
@@ -118,15 +188,15 @@ set.seed(1)
 cv_control <- trainControl(method = "cv", number = 10)
 
 # Fit polynomial logistic regression model with cross-validation
-poly_log_cv <- train(Revenue ~ ExitRates + I(ExitRates^2) + I(ExitRates^3) + I(ExitRates^4) + PageValues, 
+poly_log_cv <- train(Revenue ~ ExitRates + I(ExitRates^2) + I(ExitRates^3) + PageValues, 
                      data = training, method = "glm", family = "binomial", trControl = cv_control)
 
 
 cfs_poly <- coef(poly_log_cv$finalModel) 
 
 plot(training$ExitRates, training$PageValues,
-     col = ifelse(train_data$Revenue == 1, 'purple', 'lightblue'),
-     pch = ifelse(train_data$Revenue == 1, 3, 1),
+     col = ifelse(training$Revenue == 1, 'purple', 'lightblue'),
+     pch = ifelse(training$Revenue == 1, 3, 1),
      xlab = 'Exit Rates', ylab = 'Page Values')
 legend('topright', c('Transaction', 'No Transaction'), 
        col = c('purple', 'lightblue'), 
@@ -134,7 +204,37 @@ legend('topright', c('Transaction', 'No Transaction'),
 
 #decision boundary
 xx <- seq(min(training$ExitRates), max(training$ExitRates), length.out = 100)
-lines(xx, (cbind(1, xx, xx^2, xx^3, xx^4) %*% cfs_poly[-6]) / -cfs_poly[6],
+lines(xx, (cbind(1, xx, xx^2, xx^3) %*% cfs_poly[-5]) / -cfs_poly[5],
+      col = 'navy', lwd = 2)
+```
+
+## Dominiques version
+
+\>\> swapped the axis basically
+
+```{r}
+set.seed(1)
+
+cv_cont <- trainControl(method = "cv", number = 10)
+
+# Fit polynomial logistic regression model with cross-validation
+poly_log <- train(Revenue ~ PageValues + I(PageValues^2) + I(PageValues^3) + ExitRates, 
+                     data = training, method = "glm", family = "binomial", trControl = cv_cont)
+
+
+cfs_pol <- coef(poly_log$finalModel) 
+
+plot(training$PageValues, training$ExitRates,
+     col = ifelse(training$Revenue == 1, 'purple', 'lightblue'),
+     pch = ifelse(training$Revenue == 1, 3, 1),
+     xlab = 'Page Values', ylab = 'Exit Rates')
+legend('topright', c('Transaction', 'No Transaction'), 
+       col = c('purple', 'lightblue'), 
+       pch = c(3, 1))
+
+#decision boundary
+xx <- seq(min(training$PageValues), max(training$PageValues), length.out = 100)
+lines(xx, (cbind(1, xx, xx^2, xx^3) %*% cfs_pol[-5]) / -cfs_pol[5],
       col = 'navy', lwd = 2)
 ```
 
@@ -142,20 +242,18 @@ lines(xx, (cbind(1, xx, xx^2, xx^3, xx^4) %*% cfs_poly[-6]) / -cfs_poly[6],
 
 ```{r}
 # K-Nearest Neighbours (KNN) Model Selection with Cross-Validation
-set.seed(1)
-knn_features <- Revenue ~ ExitRates + PageValues + BounceRates  
+training$Revenue <- as.factor(training$Revenue)
 knn_grid <- expand.grid(k = 3:15)
 
+knn_control <- trainControl(method = 'repeatedcv', number = 10, repeats = 5)
 
-knn_control <- trainControl(method = 'repeatedcv', number = 10, repeats = 10)
-
+set.seed(125)
 # Train KNN model with cross-validation
-knn_cv <- train(knn_features, 
-                data = train_data, 
+knn_cv <- train(Revenue ~ PageValues + ExitRates, 
+                data = training, 
                 method = 'knn', 
                 trControl = knn_control, 
                 tuneGrid = knn_grid)
-
 plot(knn_cv)
 
 ```
@@ -202,19 +300,23 @@ text(pruned_tree, pretty = 0)
 
 ```{r}
 library(randomForest)
-
-set.seed(4026)
-bagging_model <- randomForest(Revenue ~ ., data = training,
-                              mtry = ncol(training) - 1,  # Use all features
-                              ntree = 250,
-                              importance = TRUE,
-                              na.action = na.exclude)
-set.seed(4026)
-rf_model <- randomForest(Revenue ~ ., data = training,
-                         ntree = 250,
-                         importance = TRUE,
-                         na.action = na.exclude)
-
+training$Revenue <- as.factor(training$Revenue)
+# set.seed(4026)
+# bagging_model <- randomForest(Revenue ~ ., data = training,
+#                               mtry = ncol(training) - 1,  # Use all features
+#                               ntree = 250,
+#                               importance = TRUE,
+#                               na.action = na.exclude)
+# save(bagging_model, file = "bagging_model.Rdata")
+load("bagging_model.Rdata")
+# set.seed(4026)
+# rf_model <- randomForest(Revenue ~ ., data = training,
+#                          ntree = 250,
+#                          importance = TRUE,
+#                          na.action = na.exclude)
+# 
+# save(rf_model, file = "rf_model.Rdata")
+load("rf_model.Rdata")
 # Plot OOB error rate for both models
 plot(bagging_model$err.rate[,1], type = 'l', xlab = 'Number of trees', ylab = 'OOB Error Rate',
      col = 'blue', lwd = 2, ylim = range(bagging_model$err.rate[,1], rf_model$err.rate[,1]))
@@ -224,33 +326,489 @@ legend('topright', legend = c('Bagging', 'Random Forest'),
 
 ```
 
-## XG Boost
+```{r}
+library(ranger)
+# set.seed(2)
+# 
+# # Create combinations of hyperparameters
+# rf_grid <- expand.grid(mtry = 2:(ncol(training) - 1),
+#                        splitrule = c('gini', 'hellinger'),
+#                        min.node.size = c(1, 5, 10))
+# 
+# rf_control <- trainControl(method = 'oob', verboseIter = FALSE)
+
+# Use ranger to run all these models
+# rf_gridsearch <- train(Revenue ~ .,
+#                        data = training,
+#                        method = 'ranger',
+#                        num.trees = 1000,
+#                        trControl = rf_control,
+#                        tuneGrid = rf_grid,
+#                        importance = 'impurity'
+#                       )
+# save(rf_gridsearch, file = "rf_gridsearch.Rdata")
+load("rf_gridsearch.Rdata")
+# Plot hyperparameter tuning results
+plot(rf_gridsearch)
+
+
+```
+
+## gbm Model
 
 ```{r}
-set.seed(1)
+# set.seed(1)
+# 
+# # Define hyperparameter tuning grid
+# gbm_grid <- expand.grid(
+#   n.trees = seq(3000, 7000, 500),
+#   interaction.depth = 3:10,
+#   shrinkage = c(0.0001, 0.001, 0.01),
+#   n.minobsinnode = 1
+# )
+# 
+# # Define 10-fold cross-validation
+# gbm_control <- trainControl(method = 'cv', number = 10, verboseIter = TRUE)
+# library(knitr)
+# # Train GBM model with cross-validation
+# gbm_cv <- train(
+#   Revenue ~ .,
+#   data = training,
+#   method = 'gbm',
+#   distribution = 'bernoulli',  # For classification
+#   trControl = gbm_control,
+#   verbose = FALSE,
+#   tuneGrid = gbm_grid
+# )
 
+#save(gbm_cv, file = "gbm_cv.Rdata")
 
-# Define hyperparameter tuning grid
-gbm_grid <- expand.grid(
-  n.trees = seq(500, 6000, 500),
-  interaction.depth = 1:5,
-  shrinkage = c(0.01, 0.005, 0.001),
-  n.minobsinnode = 1
-)
+load("gbm_cv.Rdata")
 
-# Define 10-fold cross-validation
-gbm_control <- trainControl(method = 'cv', number = 10, verboseIter = TRUE)
+plot(gbm_model3s3)
+gbm_model3s3$bestTune
 
-# Train GBM model with cross-validation
-gbm_cv <- train(
-  Revenue ~ ., 
-  data = training, 
-  method = 'gbm',
-  distribution = 'bernoulli',  # For classification
-  trControl = gbm_control,
-  verbose = FALSE,
-  tuneGrid = gbm_grid
-)
+library(gbm)
+# training$Revenue <- as.numeric(training$Revenue) -1
+# 
+# library(gbm)
+# set.seed(1)
+# gbm_cv_fe <- gbm(Revenue ~. , data = training,
+#                     distribution = 'bernoulli',
+#                     n.trees = 10000,
+#                     interaction.depth = 9,
+#                     shrinkage = 0.001,
+#                     bag.fraction = 1,
+#                     cv.folds = 10,
+#                     n.cores = 7,
+#                     verbose = F)
+# 
+# save(gbm_cv_fe, file = 'gbm_cv_fe.Rdata')
+load("gbm_cv_fe.Rdata")
 
-plot(gbm_cv)
+d <- gbm.perf(shopping_gbm3s3)
+legend('topright', c('CV error', 'Training error'), col = c('green', 'black'), lty = 1)
+
+### partial dependance plots
+
+### varaince plots
+
 ```
+
+# Question 1b:
+
+## Log Reg Linear Decision
+
+```{r}
+library(caret)
+library(glmnet)
+library(pROC)
+library(e1071)
+
+validation <- read.csv("online_shopping_valid.csv")
+
+# Convert categorical variables to factors
+validation$Month <- as.factor(validation$Month)
+validation$OperatingSystems <- as.factor(validation$OperatingSystems)
+validation$Browser <- as.factor(validation$Browser)
+validation$VisitorType <- as.factor(validation$VisitorType)
+validation$Weekend <- as.factor(validation$Weekend)
+validation$Revenue <- as.factor(validation$Revenue)
+
+#feature matrix 
+x_valid <- model.matrix(Revenue ~ ., data = validation)[,-1]
+y_valid <- validation$Revenue
+
+#Make predictions using the logistic regression with elastic-net regularization 
+
+logistic_fit <- glmnet(x_valid, y_valid, family = "binomial", alpha = best_alpha, lambda = best_lambda)
+
+# Predict probabilities
+predicted_probs <- predict(logistic_fit, newx = model.matrix(Revenue ~ ., validation)[,-1], type = "response")
+print(str(predicted_probs))
+
+
+# Convert probabilities to binary predictions using threshold τ = 0.5
+predictions <- ifelse(predicted_probs >= 0.5, 1, 0)
+predictions <- factor(predictions, levels = c(0, 1))
+
+#Calculate metrics on validation set
+conf_matrix <- confusionMatrix(data = as.factor(predictions), 
+                               reference = validation$Revenue, 
+                               positive = "1")
+
+
+accuracy <- conf_matrix$overall['Accuracy']
+precision <- conf_matrix$byClass['Precision']
+recall <- conf_matrix$byClass['Recall'] 
+specificity <- conf_matrix$byClass['Specificity']
+f1_score <- conf_matrix$byClass['F1']
+
+# ROC AUC
+roc_obj <- roc(validation$Revenue, predicted_probs)
+roc_auc <- roc(validation$Revenue, predicted_probs)$auc
+
+result_table <- data.frame(
+  Model = "Elastic-Net Logistic Regression",
+  Accuracy = accuracy,
+  F1_Score = f1_score,
+  Precision = precision,
+  Recall = recall,
+  Specificity = specificity,
+  ROC_AUC = roc(validation$Revenue, as.vector(predicted_probs))$auc
+)
+
+# #plot
+# roc_obj <- roc(validation$Revenue, as.vector(predicted_probs))
+# plot(roc_obj, col = "blue", lwd = 2, main = "ROC Curve for Logistic Regression (Elastic-Net)")
+# abline(a=0, b=1, col = "red", lty = 2)
+# legend("bottomright", legend = paste("AUC =", round(roc_obj$auc, 3)), col = "blue", lwd = 2)
+
+```
+
+## Log reg model with non linear decision boundary
+
+```{r}
+poly_log_cv <- train(
+  Revenue ~ ExitRates + I(ExitRates^2) + I(ExitRates^3) + PageValues, 
+  data = training, 
+  method = "glm", 
+  family = "binomial", 
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+# Predict probabilities on validation set
+poly_probs <- predict(poly_log_cv, newdata = validation, type = "prob")[, "1"]
+
+# Predictions at threshold τ = 0.5
+poly_predictions <- ifelse(poly_log_cv$finalModel$fitted.values >= 0.5, 1, 0)
+poly_predictions_valid <- ifelse(predict(poly_log_cv, validation, type = "prob")[,2] >= 0.5, 1, 0)
+
+poly_predictions_valid <- factor(poly_predictions_valid, levels = c(0,1))
+
+poly_conf_matrix <- confusionMatrix(data = poly_predictions_valid, 
+                                    reference = validation$Revenue, 
+                                    positive = "1")
+
+accuracy_poly <- poly_conf_matrix$overall['Accuracy']
+precision_poly <- poly_log_cv_precision <- poly_log_cv_recall <- poly_log_cv_f1 <- NA 
+
+precision_poly <- poly_log_cv_precision <- poly_log_cv_recall <- poly_log_cv_f1 <- NULL
+precision_poly <- poly_log_cv_precision <- conf_matrix$byClass['Precision']
+recall_poly <- poly_log_cv_recall <- conf_matrix$byClass['Recall']
+specificity_poly <- conf_matrix$byClass['Specificity']
+f1_poly <- poly_log_cv_f1 <- conf_matrix$byClass['F1']
+
+# ROC AUC
+library(pROC)
+roc_poly <- roc(validation$Revenue, 
+                predict(poly_log_cv, validation, type = "prob")[,2])
+
+roc_auc_poly <- roc_poly$auc
+
+# Summary Table
+metrics_poly_log_reg <- data.frame(
+  Model = "Non-linear Logistic Regression",
+  Accuracy = accuracy_poly,
+  F1_Score = poly_log_cv_f1 <- conf_matrix$byClass["F1"],
+  Precision = precision_poly,
+  Recall = conf_matrix$byClass["Recall"],
+  Specificity = conf_matrix$byClass["Specificity"],
+  ROC_AUC = roc_auc_poly
+)
+
+#plot
+plot(roc_poly, col = "purple", lwd = 2, 
+     main = "ROC Curve for Non-linear Logistic Regression")
+abline(a=0, b=1, col="gray", lty=2)
+
+```
+
+## KNN
+
+```{r}
+knn_grid <- expand.grid(k = 3:15)
+
+knn_control <- trainControl(method = 'repeatedcv', number = 10, repeats = 5)
+
+set.seed(125)
+knn_cv <- train(Revenue ~ PageValues + ExitRates, 
+                data = training, 
+                method = 'knn', 
+                trControl = knn_control, 
+                tuneGrid = knn_grid)
+library(caret)
+library(pROC)
+
+# Predictions on validation set
+knn_pred <- predict(knn_cv, newdata = validation)
+
+# Probabilities for ROC/AUC
+knn_prob <- predict(knn_cv, newdata = validation, type = "prob")[,2]
+
+# Confusion matrix
+knn_conf_matrix <- confusionMatrix(knn_pred, 
+                                   reference = validation$Revenue, 
+                                   positive = "1")
+
+# Metrics extraction
+accuracy_knn <- knn_conf_matrix$overall['Accuracy']
+precision_knn <- knn_conf_matrix$byClass['Precision']
+recall_knn <- knn_cv_recall <- knn_cv_precision <- NULL
+recall_knn <- knn_cv_f1 <- specificity_knn <- NULL
+
+# Get precision, recall, specificity, and F1 Score directly
+precision_knn <- knn_cv_precision <- knn_cv_recall <- knn_cv_f1 <- specificity_knn <- NULL
+precision_knn <- knn_pred_precision <- knn_conf_matrix <- confusionMatrix(knn_pred, validation$Revenue, positive="1")$byClass['Precision']
+recall_knn <- knn_cv_recall <- knn_pred_recall <- conf_matrix$byClass['Recall']
+specificity_knn <- conf_matrix$byClass['Specificity']
+f1_knn <- conf_matrix$byClass['F1']
+
+# ROC AUC
+roc_knn <- roc(validation$Revenue, knn_prob)
+roc_auc_knn <- roc_knn$auc
+
+# Summarized Results Table
+metrics_knn <- data.frame(
+  Model = "K-Nearest Neighbours",
+  Accuracy = confusionMatrix(knn_pred, validation$Revenue)$overall['Accuracy'],
+  F1_Score = f1_knn,
+  Precision = precision_knn,
+  Recall = recall_knn,
+  Specificity = specificity_knn,
+  ROC_AUC = roc_auc_knn
+)
+
+#plot
+plot(roc_knn, col = "darkorange", lwd = 2, main = "ROC Curve for KNN")
+abline(a=0,b=1,lty=2,col="gray")
+
+```
+
+## Classification Tree
+
+```{r}
+library(tree)
+
+# Large classification tree
+big_tree <- tree(Revenue ~ ., data = training, 
+                 control = tree.control(nobs = nrow(na.omit(training)), mindev = 0.005))
+
+set.seed(28)
+cv_tree <- cv.tree(big_tree, FUN = prune.misclass)
+
+# Determine optimal tree size
+optimal_size <- min(cv_tree$size[cv_tree$dev == min(cv_tree$dev)])
+
+# Pruned tree
+pruned_tree <- prune.misclass(big_tree, best = optimal_size)
+
+library(caret)
+library(pROC)
+
+# Numeric probabilities
+tree_pred_prob <- predict(pruned_tree, newdata = validation, type = "vector")[,2]
+
+# Factor predictions (binary) using τ = 0.5
+tree_pred_class <- factor(ifelse(tree_pred_prob >= 0.5, "1", "0"), levels = c("0", "1"))
+
+# Ensure actual Revenue variable is also factor with same levels
+validation$Revenue <- factor(validation$Revenue, levels = c("0", "1"))
+
+# Confusion Matrix
+conf_matrix_tree <- confusionMatrix(tree_pred_class, validation$Revenue, positive = "1")
+
+# Extract metrics explicitly
+accuracy_tree <- conf_matrix$overall['Accuracy']
+precision_tree <- conf_matrix_tree$byClass['Precision']
+recall_tree <- conf_matrix_tree$byClass['Recall']
+specificity_tree <- conf_matrix_tree$byClass['Specificity']
+f1_tree <- conf_matrix_tree$byClass['F1']
+
+# ROC AUC clearly calculated
+roc_tree <- roc(validation$Revenue, tree_pred_prob)
+roc_auc_tree <- roc_tree$auc
+
+# Summarize results correctly
+metrics_tree <- data.frame(
+  Model = "Classification Tree",
+  Accuracy = accuracy_tree,
+  F1_Score = f1_tree,
+  Precision = precision_tree,
+  Recall = recall_tree,
+  Specificity = specificity_tree,
+  ROC_AUC = roc_tree$auc
+)
+
+#plot
+roc_tree <- roc(validation$Revenue, 
+                as.numeric(predict(pruned_tree, validation, type = "vector")[,2]))
+
+plot(roc_tree, col = "darkgreen", lwd = 2, main = "ROC Curve for Classification Tree")
+abline(a=0,b=1, lty=2, col="gray")
+
+```
+
+## Random Forest
+
+```{r}
+library(randomForest)
+library(caret)
+library(pROC)
+
+# Predict probabilities on validation set
+rf_prob <- predict(rf_model, newdata = validation, type = "prob")[,2]
+
+# Predict classes using threshold τ = 0.5
+rf_pred_class <- factor(ifelse(rf_prob >= 0.5, "1", "0"), levels = c("0", "1"))
+
+# Ensure Revenue is factor
+validation$Revenue <- factor(validation$Revenue, levels = c("0", "1"))
+
+# Compute confusion matrix
+conf_matrix_rf <- confusionMatrix(rf_pred_class, validation$Revenue, positive = "1")
+
+# Extract metrics
+accuracy_rf <- conf_matrix_rf$overall['Accuracy']
+precision_rf <- conf_matrix_rf$byClass['Precision']
+recall_rf <- conf_matrix_rf$byClass['Recall']
+specificity_rf <- conf_matrix_rf$byClass['Specificity']
+f1_rf <- conf_matrix_rf$byClass['F1']
+
+# Compute ROC AUC
+roc_rf <- roc(validation$Revenue, rf_prob)
+roc_auc_rf <- roc_rf$auc
+
+# Summarize clearly in a table
+metrics_rf <- data.frame(
+  Model = "Random Forest",
+  Accuracy = accuracy_rf,
+  F1_Score = conf_matrix_rf$byClass['F1'],
+  Precision = precision_rf,
+  Recall = recall_rf,
+  Specificity = conf_matrix_rf$byClass['Specificity'],
+  ROC_AUC = roc(validation$Revenue, rf_prob)$auc
+)
+
+roc_rf <- roc(validation$Revenue, rf_prob)
+plot(roc_rf, col = "purple", lwd = 2, main = "ROC Curve for Random Forest")
+abline(a=0, b=1, lty=2, col="gray")
+
+```
+
+## gbm model
+
+```{r}
+library(caret)
+library(gbm)
+library(pROC)
+
+# Ensure Revenue is factor
+validation$Revenue <- as.factor(validation$Revenue)
+
+# Predict probabilities on validation set
+gbm_prob <- predict(gbm_model3s3, validation, type = "prob")[,2]
+
+# Convert probabilities into binary predictions (τ = 0.5)
+gbm_pred_class <- factor(ifelse(gbm_prob >= 0.5, "1", "0"), levels = c("0", "1"))
+
+# Compute confusion matrix
+conf_matrix_gbm <- confusionMatrix(gbm_pred_class, validation$Revenue, positive = "1")
+
+# Extract metrics
+accuracy_gbm <- conf_matrix_gbm$overall['Accuracy']
+precision_gbm <- conf_matrix_gbm$byClass['Precision']
+recall_gbm <- conf_matrix_gbm$byClass['Recall']
+specificity_gbm <- conf_matrix_gbm$byClass['Specificity']
+f1_gbm <- conf_matrix_gbm$byClass['F1']
+
+# ROC AUC
+library(pROC)
+roc_gbm <- roc(validation$Revenue, gbm_prob)
+roc_auc_gbm <- roc_gbm$auc
+
+# Summarize clearly into a table
+metrics_gbm <- data.frame(
+  Model = "Gradient Boosting Model (GBM)",
+  Accuracy = accuracy_gbm,
+  F1_Score = f1_gbm,
+  Precision = precision_gbm,
+  Recall = recall_gbm,
+  Specificity = specificity_gbm,
+  ROC_AUC = roc_auc_gbm
+)
+
+plot(roc_gbm, col = "orange", lwd = 2, main = "ROC Curve for GBM")
+abline(a=0, b=1, lty=2, col="gray")
+
+```
+
+## Evaluation of all models
+
+```{r}
+# Combine all model results into one dataframe
+all_models_metrics <- rbind(result_table, #Linear 
+                            metrics_poly_log_reg,  # Non-linear Logistic Regression
+                            metrics_tree,          # Classification Tree
+                            metrics_rf,            # Random Forest
+                            metrics_gbm,           # GBM
+                            metrics_knn           # KNN
+                           )          
+
+all_models_metrics <- all_models_metrics[order(-all_models_metrics$Accuracy), ]
+
+# Display the table neatly
+library(kableExtra)
+all_models_metrics %>%
+  kable(digits = 3, caption = "Model Performance Comparison on Validation Set") %>%
+  kable_styling(full_width = F, position = "center")
+
+```
+
+Discussion:
+
+# Question 2: Inference/ Interpretation
+
+```{r}
+exp(coef(log_model)) |>
+  tidy() |>
+  kable(digits = 3,col.names = c('$X_j$', '$e^{\\beta_j}$'), escape = F,
+        caption = 'Odds effects for the logistic regression model fitted to the Default dataset') |>
+  kable_styling(full_width = F)
+```
+
+a\) A higher exit rate significantly decreases the lielihood of a transaction. A 1-unit increase in exit rate reduces the odds of a purchase by 52.5%.
+
+A higher page value strongly increases purchase likelihood. A 1-unit increase in PageValues quadruples the odds of purchase.
+
+November has the highest transaction likelihood. (64.8%) Likely due to black Friday sales.
+
+Returning visitors have a 25.9% lower odds of purchasing compared to new visitors.
+
+b\) Display Tree
+
+if PageValues is less than 0.94, then the model predicts no purchase.
+
+If PageValues are greater than or equal to 0.94 and BounceRates are less than 0.0004, then the model predicts a purchase.
+
+If PageValues are greater than or equal to 0.94 and BounceRates are greater than or equal to 0.0004, then the model predicts a no purchase.

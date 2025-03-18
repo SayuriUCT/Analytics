@@ -2,6 +2,8 @@
 traindat <- read.csv("online_shopping_train.csv")
 View(traindat)
 
+install.packages("tinytex")
+
 # Converting y (Revenue) to binary variable from integer
 traindat$Revenue <- as.factor(traindat$Revenue)
 
@@ -67,7 +69,7 @@ cv_mses <- sapply(elasticnet$modlist,
 best_alpha <- alphas[which.min(cv_mses)]
 cat("The alpha value I will use is", best_alpha, "since it has the minimum MSE")
 plot(alphas, cv_mses, 'b', lwd = 2, pch = 16, col = 'cyan3', xlab = expression(alpha), ylab = 'CV MSE',
-     ylim = c(0, 1)) 
+     ylim = c(0.56, 0.6)) 
 abline(v = best_alpha, lty = 3, col = 'firebrick')
 
 
